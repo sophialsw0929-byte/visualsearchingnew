@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#000000">
+
+    <title>視覺搜尋遊戲</title>
+    <style>
+        /* 關鍵修改：全局禁止觸控預設行為 (防止頁面拖曳與縮放) */
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: "Arial", sans-serif;
+            background-color: #000;
+            -webkit-user-select: none; /* iOS 禁止選取文字 */
+            user-select: none;
+            touch-action: none; /* 關鍵：禁止瀏覽器處理手勢 */
+            -webkit-touch-callout: none; /* 禁止長按選單 */
+        }
+
+        /* --- 遊戲層 --- */
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            transition: background-image 0.5s;
+        }
+
+        #dim-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: black;
+            opacity: 0;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        #game-object {
+            position: absolute;
+            cursor: pointer;
+            z-index: 10;
+            transition: transform 0.1s;
+            display: none; 
+            object-fit: contain;
+            filter: drop-shadow(0 0 5px rgba(255,255,255,0.5));
+            /* 讓點擊區域更明確 */
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        #game-object:active {
+            transform: scale(0.9);
+        }
+
+        /* --- 勝利畫面 --- */
+        #win-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: rgba(0,0,0,0.85);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.5s;
+        }
+
+        #win-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        #win-image-container {
+            position: relative;
+            width: 90vmin;
+            height: 90vmin;
+        }
+
+        #win-image-back, #win-image-front {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        #win-image-front {
+            opacity: 0; 
+            transition: opacity 1.5s ease-in-out;
+        }
+
+        /* --- 設定按鈕 --- */
+        #settings-btn {
+            position: absolute;
+            top: 20px;
+            left: 20px; /* 避開可能的圓角螢幕 */
+            width: 60px;
+            height: 60px;
+            background-color: #fff;
+            border-radius: 15px;
+            border: 4px solid #333;
+            font-size: 30px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            z-index: 999;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.5);
+        }
+
+        /* --- 設定面板 --- */
+        #settings-panel {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #fff;
+            z-index: 1001;
+            padding: 20px;
+            box-sizing: border-box;
+            display: none;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch; /* 讓捲動更順暢 */
+        }
+
+        .panel-content {
+            max-width: 800px;
+            margin: 0 auto;
+            padding-bottom: 80px; /* 增加底部空間 */
+        }
+
+        h2 {
+            text-align: center;
+            color: #000;
+            font-size: 2.5rem;
+            margin-bottom: 30px;
+            border-bottom: 5px solid #000;
+            padding-bottom: 10px;
+        }
+
+        .setting-group {
+            margin-bottom: 40px;
+            background: #f0f0f0;
+            padding: 20px;
+            border-radius: 20px;
+        }
+
+        .setting-label {
+            font-weight: bold;
+            font-size: 1.8rem;
+            display: block;
+            margin-bottom: 15px;
+            color: #000;
+        }
+
+        .mode-options { display: flex; gap: 20px; }
+        .mode-options input[type="radio"] { display: none; }
+        .mode-btn {
+            flex: 1; padding: 20px; background: white;
+            border: 4px solid #ccc; border-radius: 15px;
+            font-size: 1.5rem; text-align: center; cursor: pointer;
+            color: #555; font-weight: bold;
+        }
+        .mode-options input[type="radio"]:checked + .mode-btn {
+            border-color: #0056b3; background-color: #dbeaff;
+            color: #000; box-shadow: 0 0 15px rgba(0, 86, 179, 0.4);
+        }
+
+        .bg-options { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
+        .bg-option {
+            width: 140px; height: 140px;
+            border: 5px solid #ccc; cursor: pointer;
+            object-fit: cover; border-radius: 15px; box-sizing: border-box;
+        }
+        .bg-option.selected {
+            border-color: #e60000; box-shadow: 0 0 15px rgba(230, 0, 0, 0.5);
+            transform: scale(1.05);
+        }
+
+        .slider-container { display: flex; align-items: center; gap: 20px; }
+        input[type=range] {
+            -webkit-appearance: none; width: 100%; height: 30px;
+            background: #ddd; border-radius: 15px; outline: none;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none;
+            width: 50px; height: 50px; border-radius: 50%;
+            background: #0056b3; cursor: pointer; border: 4px solid white;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+        }
+        #dim-value { font-size: 2rem; font-weight: bold; min-width: 100px; text-align: right; }
+
+        .size-options { display: flex; gap: 15px; }
+        .size-btn {
+            flex: 1; padding: 25px 0; border: 4px solid #ccc;
+            background: white; border-radius: 15px; cursor: pointer;
+            font-size: 1.5rem; font-weight: bold; color: #555;
+        }
+        .size-btn.selected {
+            background: #0056b3; color: white; border-color: #003d80;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+        }
+
+        #close-settings {
+            display: block; width: 100%; padding: 25px;
+            background-color: #28a745; color: white;
+            font-size: 2rem; font-weight: bold; border: none;
+            border-radius: 20px; cursor: pointer; margin-top: 40px;
+            box-shadow: 0 6px 0 #1e7e34;
+        }
+        #close-settings:active { box-shadow: 0 2px 0 #1e7e34; transform: translateY(4px); }
+    </style>
+</head>
+<body>
+    <audio id="success-sound" src="cheer.mp3"></audio>
+
+    <div id="game-container">
+        <div id="dim-overlay"></div>
+        <img id="game-object" src="object.png" alt="Find me!">
+        <div id="settings-btn" role="button" aria-label="設定">⚙️</div>
+    </div>
+
+    <div id="win-overlay">
+        <div id="win-image-container">
+            <img id="win-image-back" src="" alt="">
+            <img id="win-image-front" src="" alt="">
+        </div>
+    </div>
+
+    <div id="settings-panel">
+        <div class="panel-content">
+            <h2>⚙️ 遊戲設定</h2>
+            
+            <div class="setting-group">
+                <span class="setting-label">1. 遊戲模式</span>
+                <div class="mode-options">
+                    <label style="flex:1; cursor:pointer;">
+                        <input type="radio" name="mode" value="1" checked>
+                        <div class="mode-btn">找原圖</div>
+                    </label>
+                    <label style="flex:1; cursor:pointer;">
+                        <input type="radio" name="mode" value="2">
+                        <div class="mode-btn">找半隱藏</div>
+                    </label>
+                </div>
+            </div>
+
+            <div class="setting-group">
+                <span class="setting-label">2. 選擇背景圖片</span>
+                <div class="bg-options">
+                    <img src="frozen.jpg" class="bg-option selected" data-bg="frozen.jpg" alt="Frozen">
+                    <img src="alphablocks.jpg" class="bg-option" data-bg="alphablocks.jpg" alt="Alphablocks">
+                    <img src="peppapig.jpg" class="bg-option" data-bg="peppapig.jpg" alt="Peppa Pig">
+                </div>
+            </div>
+
+            <div class="setting-group">
+                <span class="setting-label">3. 背景變暗程度</span>
+                <div class="slider-container">
+                    <input type="range" id="dim-slider" min="0" max="100" value="0">
+                    <span id="dim-value">0%</span>
+                </div>
+            </div>
+
+            <div class="setting-group">
+                <span class="setting-label">4. 主體物件大小</span>
+                <div class="size-options">
+                    <button class="size-btn" data-size="small">小</button>
+                    <button class="size-btn selected" data-size="medium">中</button>
+                    <button class="size-btn" data-size="large">大</button>
+                </div>
+            </div>
+
+            <button id="close-settings">✅ 完成，開始遊戲</button>
+        </div>
+    </div>
+
+    <script>
+        // --- 強制禁止 iOS Safari 縮放 ---
+        // 防止雙指縮放 (Pinch to Zoom)
+        document.addEventListener('gesturestart', function(e) {
+            e.preventDefault();
+        });
+        
+        // 防止雙擊縮放 (Double Tap to Zoom)
+        let lastTouchEnd = 0;
+        document.addEventListener('touchend', function(event) {
+            const now = (new Date()).getTime();
+            if (now - lastTouchEnd <= 300) {
+                event.preventDefault();
+            }
+            lastTouchEnd = now;
+        }, false);
+
+        // --- 變數與設定 ---
+        const gameState = {
+            mode: '1', 
+            background: 'frozen.jpg',
+            dimLevel: 0,
+            size: 'medium'
+        };
+
+        const sizes = { small: 115, medium: 190, large: 300 };
+
+        const gameContainer = document.getElementById('game-container');
+        const gameObject = document.getElementById('game-object');
+        const dimOverlay = document.getElementById('dim-overlay');
+        const settingsBtn = document.getElementById('settings-btn');
+        const settingsPanel = document.getElementById('settings-panel');
+        const closeSettingsBtn = document.getElementById('close-settings');
+        const winOverlay = document.getElementById('win-overlay');
+        const winImgBack = document.getElementById('win-image-back');
+        const winImgFront = document.getElementById('win-image-front');
+        const audio = document.getElementById('success-sound');
+        const dimSlider = document.getElementById('dim-slider');
+        const dimValueText = document.getElementById('dim-value');
+
+        function init() {
+            applySettings();
+            spawnObject();
+        }
+
+        function spawnObject() {
+            const sizePx = sizes[gameState.size];
+            
+            if (gameState.mode === '1') {
+                gameObject.src = 'object.png';
+            } else {
+                gameObject.src = 'objecthalf.png';
+            }
+
+            gameObject.style.width = sizePx + 'px';
+            gameObject.style.height = 'auto'; 
+            gameObject.style.display = 'block';
+
+            // 取得當前視窗大小 (應對旋轉)
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            
+            const maxX = w - sizePx;
+            const maxY = h - sizePx;
+
+            let randomX = Math.random() * maxX;
+            let randomY = Math.random() * maxY;
+
+            // 避開左上角按鈕區域
+            if (randomX < 120 && randomY < 120) {
+                randomX += 120;
+                randomY += 120;
+            }
+
+            gameObject.style.left = randomX + 'px';
+            gameObject.style.top = randomY + 'px';
+        }
+
+        gameObject.addEventListener('click', function(e) {
+            // 阻止冒泡，確保不會觸發其他背景點擊事件
+            e.stopPropagation();
+            playWinSequence();
+        });
+
+        // 監聽螢幕旋轉，重新調整位置
+        window.addEventListener('resize', function() {
+            // 簡單重置，避免物件跑到螢幕外
+            spawnObject();
+        });
+
+        function playWinSequence() {
+            audio.currentTime = 0;
+            audio.play().catch(e => console.log("Audio play failed:", e)); // 防止自動播放阻擋報錯
+
+            if (gameState.mode === '1') {
+                winImgBack.src = 'object.png';
+                winImgFront.style.display = 'none';
+            } else {
+                winImgBack.src = 'objecthalf.png';
+                winImgFront.src = 'object.png';
+                winImgFront.style.display = 'block';
+                winImgFront.style.opacity = '0';
+            }
+
+            winOverlay.classList.add('active');
+
+            if (gameState.mode === '2') {
+                setTimeout(() => {
+                    winImgFront.style.opacity = '1'; 
+                }, 500); 
+            }
+
+            setTimeout(() => {
+                resetGame();
+            }, 4500); 
+        }
+
+        function resetGame() {
+            winOverlay.classList.remove('active');
+            audio.pause();
+            audio.currentTime = 0;
+            spawnObject(); 
+        }
+
+        settingsBtn.addEventListener('click', () => {
+            settingsPanel.style.display = 'block';
+        });
+
+        closeSettingsBtn.addEventListener('click', () => {
+            settingsPanel.style.display = 'none';
+            spawnObject(); 
+        });
+
+        document.querySelectorAll('input[name="mode"]').forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                gameState.mode = e.target.value;
+            });
+        });
+
+        document.querySelectorAll('.bg-option').forEach(img => {
+            img.addEventListener('click', (e) => {
+                document.querySelectorAll('.bg-option').forEach(i => i.classList.remove('selected'));
+                e.target.classList.add('selected');
+                gameState.background = e.target.getAttribute('data-bg');
+                applySettings();
+            });
+        });
+
+        dimSlider.addEventListener('input', (e) => {
+            gameState.dimLevel = e.target.value;
+            dimValueText.textContent = gameState.dimLevel + '%';
+            applySettings();
+        });
+
+        document.querySelectorAll('.size-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                document.querySelectorAll('.size-btn').forEach(b => b.classList.remove('selected'));
+                e.target.classList.add('selected');
+                gameState.size = e.target.getAttribute('data-size');
+            });
+        });
+
+        function applySettings() {
+            gameContainer.style.backgroundImage = `url('${gameState.background}')`;
+            dimOverlay.style.opacity = gameState.dimLevel / 100;
+        }
+
+        init();
+    </script>
+</body>
+</html>
